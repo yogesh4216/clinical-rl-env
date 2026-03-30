@@ -1,3 +1,14 @@
+---
+title: Clinical Workflow Optimization Environment
+emoji: 🏥
+colorFrom: blue
+colorTo: purple
+sdk: docker
+pinned: false
+tags:
+  - openenv
+---
+
 # Clinical Workflow Optimization Environment (OpenEnv RL)
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
