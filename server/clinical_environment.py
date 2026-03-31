@@ -86,6 +86,20 @@ class ClinicalEnvironment(Environment):
         """Execute one step in the environment."""
         self._step_count += 1
         action_str = action.action if isinstance(action, ClinicalAction) else str(action)
+        
+        # Robust parsing: if user accidentally typed JSON into the UI (e.g. '{"action": "perform_step"}')
+        if "{" in action_str and "}" in action_str:
+            try:
+                import json
+                parsed = json.loads(action_str)
+                if isinstance(parsed, dict) and "action" in parsed:
+                    action_str = parsed["action"]
+            except Exception:
+                pass
+        
+        # Clean quotes just in case
+        action_str = action_str.strip('\'"')
+
         reward = 0.0
 
         # Track whether a complication existed BEFORE this step
