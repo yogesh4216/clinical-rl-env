@@ -88,16 +88,47 @@ class ClinicalEnvironment(Environment):
         action_str = action.action if isinstance(action, ClinicalAction) else str(action)
         reward = 0.0
 
-        # 1. Perform step
-        if action_str == "perform_step":
+        # Track whether a complication existed BEFORE this step
+        had_complication = self._complication is not None
+
+        # 1. Handle complication (must come first — treat existing issues)
+        just_handled = False
+        if action_str == "handle_complication":
             if self._complication:
-                reward -= 2  # penalty for ignoring complication
+                comp = self._complication
+                if comp == "bleeding":
+                    reward += 2
+                elif comp == "infection":
+                    self._vitals["HR"] -= 3
+                    reward += 1.5
+                elif comp == "tool_failure":
+                    reward += 1
+                self._complication = None
+                just_handled = True
+            else:
+                # Penalize useless handling when no complication exists
+                reward -= 1.5
+
+        # 2. Perform step (advance procedure)
+        if action_str == "perform_step":
+            if had_complication:
+                # Penalty for ignoring an existing complication
+                reward -= 2
             else:
                 self._progress += 0.1
                 reward += 1
                 self._progress = min(self._progress, 1.0)
 
-        # 2. Time penalty
+        # 3. Penalty for ignoring a PRE-EXISTING complication
+        #    (only if complication was there before this step and not handled)
+        if had_complication and self._complication is not None:
+            reward -= 4
+            if self._complication == "bleeding":
+                self._vitals["O2"] -= 2
+            elif self._complication == "infection":
+                self._vitals["HR"] += 3
+
+        # 4. Time penalty
         self._time += 1
         reward -= 0.1
 
@@ -105,11 +136,9 @@ class ClinicalEnvironment(Environment):
         if self._time > 10:
             self._vitals["O2"] -= 1
 
-        # 3. Difficulty-based complication probability
+        # 5. Stochastic complication generation (skip if just handled — grace turn)
         prob = {"easy": 0.1, "medium": 0.4, "hard": 0.7}.get(self._difficulty, 0.1)
-
-        # 4. Generate complication
-        if random.random() < prob:
+        if not self._complication and not just_handled and random.random() < prob:
             comp = random.choice(self._complications)
             self._complication = comp
             reward -= 1
@@ -120,40 +149,16 @@ class ClinicalEnvironment(Environment):
             elif comp == "tool_failure":
                 reward -= 2
 
-        # 5. Handle complication
-        if action_str == "handle_complication" and self._complication:
-            comp = self._complication
-            if comp == "bleeding":
-                reward += 2
-            elif comp == "infection":
-                self._vitals["HR"] -= 3
-                reward += 1.5
-            elif comp == "tool_failure":
-                reward += 1
-            self._complication = None
-
-        # Penalize useless handling
-        if action_str == "handle_complication" and not self._complication:
-            reward -= 1.5
-
-        # 6. Penalty if complication ignored
-        if self._complication and action_str != "handle_complication":
-            reward -= 4
-            if self._complication == "bleeding":
-                self._vitals["O2"] -= 2
-            elif self._complication == "infection":
-                self._vitals["HR"] += 3
-
         # Clamp HR
         self._vitals["HR"] = min(self._vitals["HR"], 160)
 
-        # 7. Failure condition
+        # 6. Failure condition
         if self._vitals["O2"] < 50 or self._vitals["HR"] > 140:
             self._env_done = True
             reward -= 10
             self._progress *= 0.7
 
-        # 8. Success condition
+        # 7. Success condition
         if self._progress >= 1.0:
             self._env_done = True
             reward += 5
