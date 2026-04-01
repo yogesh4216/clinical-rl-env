@@ -27,6 +27,17 @@ The **Clinical Workflow Optimization Environment** is an [OpenEnv](https://githu
 
 The environment implements the full OpenEnv specification — typed Pydantic models, `step()`/`reset()`/`state()` API, and an `openenv.yaml` manifest — and is validated via `openenv validate`.
 
+## 🎮 How to Play / Test Manually
+
+You can play the environment yourself directly via our public Hugging Face Space Gradio UI. 
+
+**The Golden Rule:** Always check the `complication` field in the JSON Output. If there is no complication, continue the surgery. If there is an emergency, fix it immediately.
+
+1. Click **Reset** to scrub in for a fresh surgery.
+2. If `"complication": null`, type `perform_step` into the Action box and click **Step** (This advances surgery progress by 10%).
+3. If `"complication"` is NOT null (e.g. `"bleeding"` or `"tool_failure"`), type `handle_complication` into the Action box and click **Step** (This saves the patient's vitals).
+4. Bounce back and forth between these two rules until your `progress` reaches `1.0` to win a `+5.0` reward bonus!
+
 ## 🎯 Problem Statement
 
 In modern clinical settings, continuous decision-making is necessary to ensure patient safety while successfully completing medical procedures. The RL agent must:
