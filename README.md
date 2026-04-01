@@ -16,6 +16,11 @@ tags:
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.104%2B-green.svg)
 ![OpenEnv](https://img.shields.io/badge/OpenEnv-0.2%2B-purple.svg)
 
+## 🔗 Submission Links
+
+- **Hugging Face Space URL:** [https://huggingface.co/spaces/yogeshm2005/clinical-rl-env](https://huggingface.co/spaces/yogeshm2005/clinical-rl-env)
+- **GitHub Repository URL:** [ADD_YOUR_GITHUB_LINK_HERE]
+
 ## 📌 Overview
 
 The **Clinical Workflow Optimization Environment** is an [OpenEnv](https://github.com/meta-pytorch/OpenEnv)-compliant Reinforcement Learning environment that simulates complex clinical workflows. An AI agent must navigate a surgical procedure simulation, balancing rapid procedural progression with critical patient safety under stochastic complications.
