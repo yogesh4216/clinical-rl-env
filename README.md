@@ -19,7 +19,7 @@ tags:
 ## 🔗 Submission Links
 
 - **Hugging Face Space URL:** [https://huggingface.co/spaces/yogeshm2005/clinical-rl-env](https://huggingface.co/spaces/yogeshm2005/clinical-rl-env)
-- **GitHub Repository URL:** [ADD_YOUR_GITHUB_LINK_HERE]
+- **GitHub Repository URL:** [https://github.com/yogesh4216/clinical-rl-env](https://github.com/yogesh4216/clinical-rl-env)
 
 ## 📌 Overview
 
