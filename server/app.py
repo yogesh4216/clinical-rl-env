@@ -140,7 +140,10 @@ def run_baseline():
 # ------------------------------------------------------------------
 # Direct execution
 # ------------------------------------------------------------------
-if __name__ == "__main__":
+def main() -> None:
+    """Entry point for the application."""
     import uvicorn
-
     uvicorn.run(app, host="0.0.0.0", port=7860)
+
+if __name__ == "__main__":
+    main()
