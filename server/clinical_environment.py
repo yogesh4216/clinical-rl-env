@@ -163,8 +163,9 @@ class ClinicalEnvironment(Environment):
             elif comp == "tool_failure":
                 reward -= 2
 
-        # Clamp HR
-        self._vitals["HR"] = min(self._vitals["HR"], 160)
+        # Clamp vital signs to avoid Pydantic validation errors if user plays endlessly
+        self._vitals["HR"] = max(40, min(self._vitals["HR"], 160))
+        self._vitals["O2"] = max(0, min(self._vitals["O2"], 100))
 
         # 6. Failure condition
         if self._vitals["O2"] < 50 or self._vitals["HR"] > 140:
