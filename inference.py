@@ -90,8 +90,10 @@ def _rule_based(state: dict) -> str:
     return "perform_step"
 
 
-def run_episode(difficulty: str) -> float:
+def run_episode(difficulty: str, ep_num: int) -> float:
     """Run a single episode and return the grader score (0.0–1.0)."""
+    task_name = f"{difficulty}_ep{ep_num}"
+    print(f"[START] task={task_name}", flush=True)
 
     # 1. Reset — POST /reset with difficulty
     resp = requests.post(
@@ -119,15 +121,19 @@ def run_episode(difficulty: str) -> float:
         result = resp.json()
 
         obs = result.get("observation", result)
+        reward = result.get("reward", 0.0)
         done = result.get("done", False)
         step_count += 1
+        print(f"[STEP] step={step_count} reward={reward}", flush=True)
 
     # 3. Grade — GET /grader?task=difficulty
     resp = requests.get(f"{ENV_URL}/grader", params={"task": difficulty})
     resp.raise_for_status()
-    score = resp.json()["score"]
+    score = resp.json()
+    score_val = score.get("score", 0.0)
+    print(f"[END] task={task_name} score={score_val} steps={step_count}", flush=True)
 
-    return score
+    return score_val
 
 
 def main():
@@ -148,7 +154,7 @@ def main():
     for level in levels:
         scores = []
         for ep in range(num_episodes):
-            score = run_episode(level)
+            score = run_episode(level, ep + 1)
             scores.append(score)
             print(f"  [{level:6s}] Episode {ep+1}/{num_episodes} → Score: {score:.3f}")
 
