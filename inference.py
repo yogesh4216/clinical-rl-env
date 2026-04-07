@@ -1,16 +1,37 @@
 """
 inference.py — OpenEnv Competition Inference Script
+===================================
+MANDATORY
+- Before submitting, ensure the following variables are defined in your environment configuration:
+    API_BASE_URL   The API endpoint for the LLM.
+    MODEL_NAME     The model identifier to use for inference.
+    HF_TOKEN       Your Hugging Face / API key.
+    LOCAL_IMAGE_NAME The name of the local image to use for the environment if you are using from_docker_image()
 
-Evaluates an LLM-based agent on the Clinical Workflow Optimization
-Environment across Easy, Medium, and Hard difficulty levels.
+- Defaults are set only for API_BASE_URL and MODEL_NAME
+    (and should reflect your active inference setup):
+    API_BASE_URL = os.getenv("API_BASE_URL", "<your-active-endpoint>")
+    MODEL_NAME = os.getenv("MODEL_NAME", "<your-active-model>")
 
-Required Environment Variables:
-    API_BASE_URL  — The API endpoint for the LLM (OpenAI-compatible)
-    MODEL_NAME    — The model identifier to use for inference
-    HF_TOKEN      — Hugging Face / API key for authentication
+- The inference script must be named `inference.py` and placed in the root directory of the project
+- Participants must use OpenAI Client for all LLM calls using above variables
 
-The environment is assumed to be running locally in the same container
-on port 7860 (Hugging Face Spaces default).
+STDOUT FORMAT
+- The script must emit exactly three line types to stdout, in this order:
+
+    [START] task=<task_name> env=<benchmark> model=<model_name>
+    [STEP]  step=<n> action=<action_str> reward=<0.00> done=<true|false> error=<msg|null>
+    [END]   success=<true|false> steps=<n> score=<score> rewards=<r1,r2,...,rn>
+
+  Rules:
+    - One [START] line at episode begin.
+    - One [STEP] line per step, immediately after env.step() returns.
+    - One [END] line after env.close(), always emitted (even on exception).
+    - reward and rewards are formatted to 2 decimal places.
+    - done and success are lowercase booleans: true or false.
+    - error is the raw last_action_error string, or null if none.
+    - All fields on a single line with no newlines within a line.
+    - Each tasks should return score in [0, 1]
 """
 
 import os
@@ -23,8 +44,8 @@ from openai import OpenAI
 # ---------------------------------------------------------------------------
 # Configuration from environment variables
 # ---------------------------------------------------------------------------
-API_BASE_URL = os.getenv("API_BASE_URL", "<your-api-base-url>")
-MODEL_NAME = os.getenv("MODEL_NAME", "<your-model-name>")
+API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
+MODEL_NAME = os.getenv("MODEL_NAME", "meta-llama/Llama-3.1-8B-Instruct")
 HF_TOKEN = os.getenv("HF_TOKEN")
 
 # Optional — if you use from_docker_image():
@@ -33,11 +54,14 @@ LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
 # Environment URL — runs in the same container
 ENV_URL = os.getenv("ENV_URL", "http://localhost:7860")
 
+# Environment name (matches openenv.yaml)
+ENV_NAME = "clinical_workflow_env"
+
 # ---------------------------------------------------------------------------
-# LLM Client — OpenAI-compatible endpoint
+# LLM Client — OpenAI-compatible endpoint (using OpenAI Client as required)
 # ---------------------------------------------------------------------------
 client = None
-if HF_TOKEN and API_BASE_URL and not API_BASE_URL.startswith("<"):
+if HF_TOKEN:
     client = OpenAI(
         base_url=API_BASE_URL,
         api_key=HF_TOKEN,
@@ -58,6 +82,9 @@ Decision rules:
 Respond with ONLY the JSON object, no extra text."""
 
 
+# ---------------------------------------------------------------------------
+# Helpers — all informational output to stderr only
+# ---------------------------------------------------------------------------
 def _log(msg: str) -> None:
     """Log informational messages to stderr so they don't pollute stdout."""
     print(msg, file=sys.stderr, flush=True)
@@ -98,6 +125,20 @@ def _rule_based(state: dict) -> str:
     return "perform_step"
 
 
+def _compute_score(obs: dict) -> float:
+    """Compute a grader score (0.0–1.0) from the final observation."""
+    completion = obs.get("progress", 0.0)
+    vitals = obs.get("vitals", {})
+    o2 = vitals.get("O2", 98)
+    time_val = obs.get("time", 0)
+
+    vitals_score = o2 / 100.0
+    time_penalty = min(time_val / 20.0, 1.0)
+
+    score = 0.5 * completion + 0.3 * vitals_score + 0.2 * (1.0 - time_penalty)
+    return max(0.0, min(1.0, round(score, 2)))
+
+
 def _wait_for_server(url: str, timeout: int = 60) -> bool:
     """Wait for the environment server to become available."""
     start = time.time()
@@ -115,27 +156,40 @@ def _wait_for_server(url: str, timeout: int = 60) -> bool:
     return False
 
 
-def run_episode(difficulty: str, ep_num: int) -> float:
-    """Run a single episode and return the grader score (0.0–1.0)."""
-    task_name = f"{difficulty}_ep{ep_num}"
+# ---------------------------------------------------------------------------
+# Core episode runner — emits [START] / [STEP] / [END] to stdout
+# ---------------------------------------------------------------------------
+def run_episode(task_name: str) -> float:
+    """Run a single episode for the given task.
 
-    # Always print [START] — this is required by the validator
-    print(f"[START] task={task_name}", flush=True)
-
-    score_val = 0.0
+    Emits exactly the structured stdout format required by the validator:
+      [START] task=<task_name> env=<env_name> model=<model_name>
+      [STEP]  step=<n> action=<action> reward=<0.00> done=<bool> error=<msg|null>
+      [END]   success=<bool> steps=<n> score=<0.00> rewards=<r1,r2,...,rn>
+    """
+    model_display = MODEL_NAME
+    rewards_list: list[float] = []
     step_count = 0
+    score_val = 0.0
+    success = False
+    last_error = None
+
+    # === [START] ===
+    print(
+        f"[START] task={task_name} env={ENV_NAME} model={model_display}",
+        flush=True,
+    )
 
     try:
-        # 1. Reset — POST /reset with difficulty
+        # 1. Reset environment
         resp = requests.post(
             f"{ENV_URL}/reset",
-            json={"difficulty": difficulty},
+            json={"difficulty": task_name},
             timeout=30,
         )
         resp.raise_for_status()
         result = resp.json()
 
-        # The OpenEnv ResetResponse has: observation, reward, done
         obs = result.get("observation", result)
         done = result.get("done", False)
         max_steps = 50
@@ -153,38 +207,50 @@ def run_episode(difficulty: str, ep_num: int) -> float:
             result = resp.json()
 
             obs = result.get("observation", result)
-            reward = result.get("reward", 0.0)
+            reward = float(result.get("reward", 0.0))
             done = result.get("done", False)
             step_count += 1
-            print(f"[STEP] step={step_count} reward={reward}", flush=True)
+            rewards_list.append(reward)
 
-        # 3. Grade — GET /grader?task=difficulty
-        resp = requests.get(
-            f"{ENV_URL}/grader",
-            params={"task": difficulty},
-            timeout=30,
-        )
-        resp.raise_for_status()
-        score = resp.json()
-        score_val = score.get("score", 0.0)
+            # === [STEP] ===
+            done_str = "true" if done else "false"
+            print(
+                f"[STEP] step={step_count} action={action_str} "
+                f"reward={reward:.2f} done={done_str} error=null",
+                flush=True,
+            )
+
+        # 3. Compute score from final observation
+        score_val = _compute_score(obs)
+        success = True
 
     except Exception as e:
-        _log(f"  [ERROR] Episode {task_name} failed: {e}")
+        last_error = str(e).replace("\n", " ")
+        _log(f"  [ERROR] {task_name}: {last_error}")
 
-    # Always print [END] — this is required by the validator
-    print(f"[END] task={task_name} score={score_val} steps={step_count}", flush=True)
+    # === [END] — always emitted, even on exception ===
+    success_str = "true" if success else "false"
+    rewards_str = ",".join(f"{r:.2f}" for r in rewards_list) if rewards_list else "0.00"
+    print(
+        f"[END] success={success_str} steps={step_count} "
+        f"score={score_val:.2f} rewards={rewards_str}",
+        flush=True,
+    )
 
     return score_val
 
 
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
 def main():
-    """Evaluate the agent across all difficulty levels and print final scores."""
+    """Evaluate the agent across all difficulty levels."""
     _log("=" * 60)
     _log("  Clinical Workflow RL — OpenEnv Inference")
     _log("=" * 60)
     _log(f"  API_BASE_URL : {API_BASE_URL}")
     _log(f"  MODEL_NAME   : {MODEL_NAME}")
-    _log(f"  HF_TOKEN     : {'***' if HF_TOKEN else '(not set)'}")
+    _log(f"  HF_TOKEN     : {'***' if HF_TOKEN else '(not set — rule-based)'}")
     _log(f"  ENV_URL      : {ENV_URL}")
     _log("=" * 60)
 
@@ -192,30 +258,26 @@ def main():
     if not _wait_for_server(ENV_URL, timeout=60):
         _log(f"  [WARN] Server at {ENV_URL} not reachable, proceeding anyway...")
 
-    levels = ["easy", "medium", "hard"]
-    num_episodes = 5
-    results = {}
+    # Enumerate tasks from the /tasks endpoint
+    task_names = ["easy", "medium", "hard"]  # fallback
+    try:
+        resp = requests.get(f"{ENV_URL}/tasks", timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            task_names = [t["name"] for t in data.get("tasks", [])]
+    except Exception:
+        pass
 
-    for level in levels:
-        scores = []
-        for ep in range(num_episodes):
-            score = run_episode(level, ep + 1)
-            scores.append(score)
-            _log(f"  [{level:6s}] Episode {ep+1}/{num_episodes} -> Score: {score:.3f}")
+    _log(f"  Tasks: {task_names}")
 
-        avg = sum(scores) / len(scores)
-        results[level] = round(avg, 4)
-        _log(f"  [{level:6s}] Average Score: {avg:.4f}\n")
+    # Run one episode per task
+    for task in task_names:
+        score = run_episode(task)
+        _log(f"  [{task}] Score: {score:.2f}")
 
-    # Final summary to stderr (not stdout)
     _log("=" * 60)
-    _log("  FINAL SCORES")
+    _log("  Inference complete.")
     _log("=" * 60)
-    for level in levels:
-        _log(f"  {level:6s}: {results[level]}")
-    _log("=" * 60)
-
-    return results
 
 
 if __name__ == "__main__":
